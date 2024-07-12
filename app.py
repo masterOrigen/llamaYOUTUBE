@@ -1,8 +1,9 @@
 import streamlit as st
-from llama_index.core import StorageContext, load_index_from_storage, VectorStoreIndex, SimpleDirectoryReader, ChatPromptTemplate
-from llama_index.llms.groq import Groq
-from llama_index.embeddings.groq import GroqEmbedding
-from llama_index.core import Settings
+from llama_index import VectorStoreIndex, SimpleDirectoryReader, ServiceContext
+from llama_index.llms import Groq
+from llama_index.embeddings import GroqEmbedding
+from llama_index.prompts import ChatPromptTemplate
+from llama_index.storage import StorageContext
 from youtube_transcript_api import YouTubeTranscriptApi
 import shutil
 import os
@@ -31,18 +32,17 @@ with st.sidebar:
 
 # Configure the Llama index settings
 @st.cache_resource
-def get_llm(model_name):
-    return Groq(
+def get_service_context(model_name):
+    llm = Groq(
         model_name=model_name,
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.1,
     )
-
-Settings.llm = get_llm(selected_model)
-Settings.embed_model = GroqEmbedding(
-    model_name="llama2-70b-4096",
-    api_key=os.getenv("GROQ_API_KEY")
-)
+    embed_model = GroqEmbedding(
+        model_name="llama2-70b-4096",
+        api_key=os.getenv("GROQ_API_KEY")
+    )
+    return ServiceContext.from_defaults(llm=llm, embed_model=embed_model)
 
 # Define the directory for persistent storage and data
 PERSIST_DIR = "./db"
@@ -54,8 +54,8 @@ os.makedirs(PERSIST_DIR, exist_ok=True)
 
 def data_ingestion():
     documents = SimpleDirectoryReader(DATA_DIR).load_data()
-    storage_context = StorageContext.from_defaults()
-    index = VectorStoreIndex.from_documents(documents)
+    service_context = get_service_context(selected_model)
+    index = VectorStoreIndex.from_documents(documents, service_context=service_context)
     index.storage_context.persist(persist_dir=PERSIST_DIR)
 
 def remove_old_files():
@@ -73,8 +73,9 @@ def extract_transcript_details(youtube_video_url):
         st.error(e)
 
 def handle_query(query):
+    service_context = get_service_context(selected_model)
     storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
-    index = load_index_from_storage(storage_context)
+    index = VectorStoreIndex.from_storage(storage_context, service_context=service_context)
     chat_text_qa_msgs = [
     (
         "user",
@@ -88,14 +89,8 @@ def handle_query(query):
     ]
     text_qa_template = ChatPromptTemplate.from_messages(chat_text_qa_msgs)
     query_engine = index.as_query_engine(text_qa_template=text_qa_template)
-    answer = query_engine.query(query)
-    
-    if hasattr(answer, 'response'):
-        return answer.response
-    elif isinstance(answer, dict) and 'response' in answer:
-        return answer['response']
-    else:
-        return "Sorry, I couldn't find an answer."
+    response = query_engine.query(query)
+    return response.response
 
 def streamer(text):
     for i in text:
