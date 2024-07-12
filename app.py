@@ -1,9 +1,9 @@
 import streamlit as st
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext
-from llama_index.core.chat_engine import ChatPromptTemplate
-from llama_index.llms.groq import Groq
-from llama_index.embeddings.groq import GroqEmbedding
-from llama_index.core import Settings
+from llama_index import VectorStoreIndex, SimpleDirectoryReader, StorageContext
+from llama_index.prompts import ChatPromptTemplate
+from llama_index.llms import Groq
+from llama_index.embeddings import GroqEmbedding
+from llama_index import ServiceContext
 from youtube_transcript_api import YouTubeTranscriptApi
 import shutil
 import os
@@ -32,17 +32,17 @@ with st.sidebar:
 
 # Configure the Llama index settings
 @st.cache_resource
-def get_settings(model_name):
-    Settings.llm = Groq(
+def get_service_context(model_name):
+    llm = Groq(
         model_name=model_name,
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.1,
     )
-    Settings.embed_model = GroqEmbedding(
+    embed_model = GroqEmbedding(
         model_name="llama2-70b-4096",
         api_key=os.getenv("GROQ_API_KEY")
     )
-    return Settings
+    return ServiceContext.from_defaults(llm=llm, embed_model=embed_model)
 
 # Define the directory for persistent storage and data
 PERSIST_DIR = "./db"
@@ -54,8 +54,8 @@ os.makedirs(PERSIST_DIR, exist_ok=True)
 
 def data_ingestion():
     documents = SimpleDirectoryReader(DATA_DIR).load_data()
-    settings = get_settings(selected_model)
-    index = VectorStoreIndex.from_documents(documents, settings=settings)
+    service_context = get_service_context(selected_model)
+    index = VectorStoreIndex.from_documents(documents, service_context=service_context)
     index.storage_context.persist(persist_dir=PERSIST_DIR)
 
 def remove_old_files():
@@ -73,9 +73,9 @@ def extract_transcript_details(youtube_video_url):
         st.error(e)
 
 def handle_query(query):
-    settings = get_settings(selected_model)
+    service_context = get_service_context(selected_model)
     storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
-    index = VectorStoreIndex.from_storage(storage_context, settings=settings)
+    index = VectorStoreIndex.from_storage(storage_context, service_context=service_context)
     chat_text_qa_msgs = [
     (
         "user",
